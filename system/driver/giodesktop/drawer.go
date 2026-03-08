@@ -12,6 +12,7 @@ import (
 
 	"cogentcore.org/core/math32"
 	"github.com/mlekudev/gio/f32"
+	"github.com/mlekudev/gio/io/event"
 	"github.com/mlekudev/gio/op"
 	"github.com/mlekudev/gio/op/clip"
 	"github.com/mlekudev/gio/op/paint"
@@ -40,7 +41,14 @@ type GioDrawer struct {
 	// frameDone is signaled when a frame has been submitted (or skipped).
 	// The event loop blocks on this after setting the frameFunc.
 	frameDone chan struct{}
+
+	// winSize is the current window size, used to create the input area.
+	winSize image.Point
 }
+
+// inputTag is the event.Tag used to register and read input events.
+// We use a package-level var so the pointer is stable across frames.
+var inputTag byte
 
 func newGioDrawer() *GioDrawer {
 	return &GioDrawer{
@@ -57,9 +65,15 @@ func (d *GioDrawer) Start() {
 	d.ready = false
 }
 
-// End completes the composition pass, marks ops as ready,
+// End completes the composition pass. Adds a full-window input area
+// so Gio routes pointer/key events to us, marks ops as ready,
 // submits if a frame callback is pending, and releases the lock.
 func (d *GioDrawer) End() {
+	// Register input area covering the whole window so we get events.
+	area := clip.Rect(image.Rectangle{Max: d.winSize}).Push(&d.ops)
+	event.Op(&d.ops, &inputTag)
+	area.Pop()
+
 	d.ready = true
 	d.submit()
 	d.mu.Unlock()
@@ -90,9 +104,10 @@ func (d *GioDrawer) submit() {
 // because ops are already ready. If neither happens within a short
 // timeout, it submits an empty frame to satisfy Gio's contract
 // (e.Frame must be called before the next Event() call).
-func (d *GioDrawer) FrameReady(f func(*op.Ops)) {
+func (d *GioDrawer) FrameReady(f func(*op.Ops), size image.Point) {
 	d.mu.Lock()
 	d.frameFunc = f
+	d.winSize = size
 	if d.ready {
 		// Ops are already built (from a previous composition), submit now.
 		d.submit()
@@ -105,10 +120,13 @@ func (d *GioDrawer) FrameReady(f func(*op.Ops)) {
 	case <-d.frameDone:
 	case <-time.After(50 * time.Millisecond):
 		// Composition didn't complete in time. Submit an empty frame
-		// so Gio doesn't try to process one itself with nil context.
+		// with input area so we still get events next frame.
 		d.mu.Lock()
 		if d.frameFunc != nil {
 			var empty op.Ops
+			area := clip.Rect(image.Rectangle{Max: d.winSize}).Push(&empty)
+			event.Op(&empty, &inputTag)
+			area.Pop()
 			d.frameFunc(&empty)
 			d.frameFunc = nil
 		}
@@ -124,9 +142,7 @@ func (d *GioDrawer) Copy(dp image.Point, src image.Image, sr image.Rectangle, dr
 		return
 	}
 	sz := sr.Size()
-	// Clip to the destination rectangle.
 	stack := clip.Rect(image.Rectangle{Min: dp, Max: dp.Add(sz)}).Push(&d.ops)
-	// Offset so the image is drawn at dp.
 	off := op.Offset(dp.Sub(sr.Min)).Push(&d.ops)
 	paint.NewImageOp(src).Add(&d.ops)
 	paint.PaintOp{}.Add(&d.ops)
@@ -170,9 +186,6 @@ func (d *GioDrawer) Transform(xform math32.Matrix3, src image.Image, sr image.Re
 	if sr.Empty() {
 		return
 	}
-	// Convert math32.Matrix3 ([9]float32, column-major) to f32.Affine2D.
-	// Layout: m[0]=n11(a), m[1]=n21(c), m[3]=n12(b), m[4]=n22(d), m[6]=n13(tx), m[7]=n23(ty)
-	// NewAffine2D(sx, hx, ox, hy, sy, oy) = (a, b, tx, c, d, ty)
 	aff := f32.NewAffine2D(
 		xform[0], xform[3], xform[6],
 		xform[1], xform[4], xform[7],
