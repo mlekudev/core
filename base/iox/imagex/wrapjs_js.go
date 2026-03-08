@@ -12,7 +12,7 @@ import (
 
 	"cogentcore.org/core/base/errors"
 	"cogentcore.org/core/colors/gradient"
-	"github.com/cogentcore/webgpu/jsx"
+	"cogentcore.org/core/base/jsutil"
 )
 
 // WrapJS returns a JavaScript optimized wrapper around the given
@@ -155,7 +155,7 @@ type JSImageData struct {
 
 // setImageData sets the JavaScript pointers from given bytes.
 func (im *JSImageData) SetImageData(src []byte, sbb image.Rectangle, options map[string]any) {
-	jsBuf := jsx.BytesToJS(src)
+	jsBuf := jsutil.BytesToJS(src)
 	imageData := js.Global().Get("ImageData").New(jsBuf, sbb.Dx(), sbb.Dy())
 	im.Bounds = image.Rectangle{Max: sbb.Size()}
 	im.Data = imageData
@@ -172,7 +172,7 @@ func createImageBitmap(imageData js.Value, options map[string]any, args ...any) 
 	} else {
 		imageBitmapPromise = js.Global().Call("createImageBitmap", imageData, options)
 	}
-	imageBitmap, ok := jsx.Await(imageBitmapPromise)
+	imageBitmap, ok := jsutil.Await(imageBitmapPromise)
 	if ok {
 		return imageBitmap, nil
 	} else {

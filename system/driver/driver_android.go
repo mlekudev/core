@@ -6,10 +6,8 @@
 
 package driver
 
-import (
-	"cogentcore.org/core/system/driver/android"
-)
-
+// Android driver not yet implemented with Gio backend.
+// Use offscreen driver for testing.
 func init() {
-	android.Init()
+	// TODO: implement Gio-based android driver
 }

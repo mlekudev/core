@@ -16,16 +16,14 @@ import (
 	"slices"
 	"testing"
 
-	"cogentcore.org/core/system/driver/desktop"
+	"cogentcore.org/core/system/driver/giodesktop"
 	"cogentcore.org/core/system/driver/offscreen"
 )
 
 func init() {
-	// TODO(kai/binsize): consider figuring out how to do this without
-	// increasing binary sizes; also supporting running tests on mobile and web
 	if testing.Testing() || slices.Contains(os.Args, "-nogui") {
 		offscreen.Init()
 		return
 	}
-	desktop.Init()
+	giodesktop.Init()
 }

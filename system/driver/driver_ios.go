@@ -6,10 +6,8 @@
 
 package driver
 
-import (
-	"cogentcore.org/core/system/driver/ios"
-)
-
+// iOS driver not yet implemented with Gio backend.
+// Use offscreen driver for testing.
 func init() {
-	ios.Init()
+	// TODO: implement Gio-based iOS driver
 }
