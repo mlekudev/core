@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/draw"
 	"sync"
+	"time"
 
 	"cogentcore.org/core/math32"
 	"github.com/mlekudev/gio/f32"
@@ -18,6 +19,11 @@ import (
 
 // GioDrawer implements composer.Drawer using Gio's operation stream
 // to composite pre-rendered images onto the window surface.
+//
+// Synchronization model: Gio requires that e.Frame(&ops) is called
+// before the next Event() call. The event loop goroutine calls
+// FrameReady() when a FrameEvent arrives, which blocks until
+// the composition goroutine finishes (End calls e.Frame via submit).
 type GioDrawer struct {
 	mu sync.Mutex
 
@@ -30,11 +36,21 @@ type GioDrawer struct {
 	// frameFunc is set by the event loop's FrameEvent handler;
 	// calling it submits the ops to Gio's GPU pipeline.
 	frameFunc func(*op.Ops)
+
+	// frameDone is signaled when a frame has been submitted (or skipped).
+	// The event loop blocks on this after setting the frameFunc.
+	frameDone chan struct{}
+}
+
+func newGioDrawer() *GioDrawer {
+	return &GioDrawer{
+		frameDone: make(chan struct{}, 1),
+	}
 }
 
 // Start begins a composition pass, acquiring the lock.
 // The lock is held until End() is called, so Copy/Scale/Transform
-// are protected from concurrent SetFrameFunc access.
+// are protected from concurrent access.
 func (d *GioDrawer) Start() {
 	d.mu.Lock()
 	d.ops.Reset()
@@ -56,21 +72,48 @@ func (d *GioDrawer) Redraw() {
 }
 
 // submit calls frameFunc if one is pending. Called with mu held.
+// Signals frameDone after calling frameFunc so the event loop unblocks.
 func (d *GioDrawer) submit() {
 	if d.frameFunc != nil && d.ready {
 		d.frameFunc(&d.ops)
 		d.frameFunc = nil
+		select {
+		case d.frameDone <- struct{}{}:
+		default:
+		}
 	}
 }
 
-// SetFrameFunc is called by the event loop when a FrameEvent arrives.
-// It stores the frame callback so that the next End() or Redraw() can submit.
-func (d *GioDrawer) SetFrameFunc(f func(*op.Ops)) {
+// FrameReady is called by the event loop when a FrameEvent arrives.
+// It stores the frame callback and blocks until the compositor calls
+// End() (which calls submit), or until it can submit immediately
+// because ops are already ready. If neither happens within a short
+// timeout, it submits an empty frame to satisfy Gio's contract
+// (e.Frame must be called before the next Event() call).
+func (d *GioDrawer) FrameReady(f func(*op.Ops)) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	d.frameFunc = f
-	// If ops are already ready (e.g. Redraw), submit immediately.
-	d.submit()
+	if d.ready {
+		// Ops are already built (from a previous composition), submit now.
+		d.submit()
+		d.mu.Unlock()
+		return
+	}
+	d.mu.Unlock()
+	// Wait for the compositor to finish, with a timeout.
+	select {
+	case <-d.frameDone:
+	case <-time.After(50 * time.Millisecond):
+		// Composition didn't complete in time. Submit an empty frame
+		// so Gio doesn't try to process one itself with nil context.
+		d.mu.Lock()
+		if d.frameFunc != nil {
+			var empty op.Ops
+			d.frameFunc(&empty)
+			d.frameFunc = nil
+		}
+		d.mu.Unlock()
+	}
 }
 
 func (d *GioDrawer) Copy(dp image.Point, src image.Image, sr image.Rectangle, drawOp draw.Op, unchanged bool) {

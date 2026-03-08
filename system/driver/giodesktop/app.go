@@ -69,7 +69,7 @@ func (a *App) NewWindow(opts *coresystem.NewWindowOptions) (coresystem.Window, e
 	gw.Option(gioOpts...)
 	w.GioWin = gw
 
-	w.GioDraw = &GioDrawer{}
+	w.GioDraw = newGioDrawer()
 	w.Compose = &composer.ComposerDrawer{Drawer: w.GioDraw}
 
 	w.PixelSize = opts.Size

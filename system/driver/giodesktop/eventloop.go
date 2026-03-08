@@ -51,8 +51,13 @@ func (w *Window) handleDestroy(e gioapp.DestroyEvent) {
 
 func (w *Window) handleFrame(e gioapp.FrameEvent) {
 	w.updateGeometryFromGio(e.Size, e.Metric)
-	// Set the frame function so the drawer can submit ops when composition completes.
-	w.GioDraw.SetFrameFunc(e.Frame)
+	// Trigger a paint event so the compositor runs.
+	w.Event.WindowPaint()
+	// Block until composition finishes and e.Frame is called.
+	// This satisfies Gio's contract: e.Frame must be called before
+	// the next Event() call. Timeout prevents deadlock if no
+	// composition source is ready.
+	w.GioDraw.FrameReady(e.Frame)
 }
 
 func (w *Window) handleConfig(e gioapp.ConfigEvent) {
